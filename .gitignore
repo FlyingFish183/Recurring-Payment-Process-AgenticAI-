@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Logs / OS
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE / test
+.idea/
+.vscode/
+coverage/
+*.tsbuildinfo
+
+# Prisma
+backend/prisma/*.db
+backend/prisma/*.db-journal

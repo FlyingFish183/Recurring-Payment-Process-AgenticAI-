@@ -43,12 +43,12 @@ Hide nav the current actor cannot use.
 
 ## Phase 1 — Shell + inbox + draft request
 
-- [ ] Role switcher (5 actors); team labels.
-- [ ] Payment Inbox: filter store, period, status, risk, amount.
-- [ ] Create Request: store + period → DRAFT.
-- [ ] Request Detail shell: header, empty line grid, totals.
+- [x] Role switcher (5 actors); team labels.
+- [x] Payment Inbox: filter store, period, status, risk, amount.
+- [x] Create Request: store + period → DRAFT.
+- [x] Request Detail shell: header, empty line grid, totals.
 
-**Done when**: Can create/list/open a DRAFT (mock or API).
+**Done when**: Can create/list/open a DRAFT (mock or API). ✅ live API
 
 ---
 

@@ -43,27 +43,27 @@ Optional blueprint `ADMIN` — skip for MVP workflow.
 
 ## Phase 1 — Foundation (blueprint §17.1)
 
-- [ ] TypeScript Express (`src/`, `tsx`, CORS, `/health`).
-- [ ] Prisma models matching blueprint attributes:
+- [x] TypeScript Express (`src/`, `tsx`, CORS, `/health`).
+- [x] Prisma models matching blueprint attributes:
   - `Store`, `User`, `Vendor`, `BankAccount` (encrypted + hash fields)
   - `Contract` (type, amounts, JSON rules, version)
   - `PaymentRequest` (period, derived total, status enum, risk, approval level, version)
   - `PaymentLine` (expense_type, vendor, contract?, bank?, amounts, invoice refs, source, confirmed_by)
-- [ ] Seed: stores, vendors, bank accounts, ~sample of 255-scale contracts, 5 role users.
-- [ ] Mock Entra login by role; `requireRole`.
-- [ ] CRUD APIs: stores, vendors, bank-accounts, contracts, payment-requests, payment-lines.
+- [x] Seed: stores, vendors, bank accounts, ~sample of 255-scale contracts, 5 role users.
+- [x] Mock Entra login by role; `requireRole`.
+- [x] CRUD APIs: stores, vendors, bank-accounts, contracts, payment-requests, payment-lines.
 
-**Done when**: Create DRAFT request + add manual lines; total = sum(lines).
+**Done when**: Create DRAFT request + add manual lines; total = sum(lines). ✅ verified
 
 ---
 
 ## Phase 2 — Document layer (§17.2)
 
-- [ ] `Document` model: `request_id` required, `line_id` optional, SHA-256, `storage_uri`, types, processing_status.
-- [ ] Upload to S3 (sanitize filename); create Document row; associate request/line.
-- [ ] Process queue stub (`UPLOADED` → `QUEUED`).
+- [x] `Document` model: `request_id` required, `line_id` optional, SHA-256, `storage_uri`, types, processing_status.
+- [x] Upload to S3 (sanitize filename); create Document row; associate request/line.
+- [x] Process queue stub (`UPLOADED` → `QUEUED`).
 
-**Done when**: Upload XML/PDF onto a request; list documents on aggregate GET.
+**Done when**: Upload XML/PDF onto a request; list documents on aggregate GET. ✅ bucket `kfc-document-pdf` (`pdf/`, `XML/`)
 
 ---
 

@@ -1,0 +1,536 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  REQUESTER
+  HOD
+  FA
+  CA
+  CASHIER
+  ADMIN
+}
+
+enum EntityStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum VendorType {
+  LANDLORD
+  UTILITY
+  SERVICE
+  SUPPLIER
+  OTHER
+}
+
+enum BankVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ContractType {
+  RENT
+  SERVICE
+  UTILITY
+  MAINTENANCE
+  OTHER
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum PaymentRequestStatus {
+  DRAFT
+  EXTRACTING
+  READY
+  SUBMITTED
+  IN_REVIEW
+  CHANGES_REQUESTED
+  REJECTED
+  APPROVED
+  POSTING
+  POSTED
+  PAYMENT_PROCESSING
+  PAID
+  CANCELLED
+}
+
+enum ExpenseType {
+  RENT
+  ELECTRICITY
+  WATER
+  SERVICE_FEE
+  MAINTENANCE
+  OTHER
+}
+
+enum PaymentLineStatus {
+  DRAFT
+  EXTRACTED
+  VALIDATING
+  PASS
+  WARNING
+  HIGH_RISK
+  BLOCKED
+  APPROVED
+  REJECTED
+  POSTED
+  PAID
+}
+
+enum PaymentLineSource {
+  MANUAL
+  XML_PARSED
+  AI_PROPOSED
+}
+
+enum DocumentFormat {
+  XML
+  PDF
+  IMAGE
+  OTHER
+}
+
+enum DocumentType {
+  E_INVOICE
+  CONTRACT
+  CONTRACT_APPENDIX
+  PAYMENT_NOTICE
+  ACCEPTANCE_RECORD
+  UTILITY_BILL
+  SUPPORTING_SCHEDULE
+  OTHER
+}
+
+enum DocumentProcessingStatus {
+  UPLOADED
+  QUEUED
+  PROCESSING
+  EXTRACTED
+  FAILED
+}
+
+enum ExtractionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum ValidationType {
+  DUPLICATE
+  VENDOR_MATCH
+  BANK_MATCH
+  CONTRACT_AMOUNT
+  CONTRACT_DATE
+  AMOUNT_ANOMALY
+  DOCUMENT_COMPLETENESS
+  XML_PDF_CONSISTENCY
+  TAX_CHECK
+}
+
+enum ValidationSeverity {
+  INFO
+  WARNING
+  HIGH
+  BLOCKING
+}
+
+enum ApprovalStepStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+  SKIPPED
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  VOID
+}
+
+enum PaymentRecordStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CHEQUE
+  CASH
+  OTHER
+}
+
+// ─── Master data ─────────────────────────────────────────────────────────────
+
+model Store {
+  id             String       @id @default(cuid())
+  storeCode      String       @unique @map("store_code")
+  storeName      String       @map("store_name")
+  costCenterCode String?      @map("cost_center_code")
+  region         String?
+  address        String?
+  status         EntityStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  contracts       Contract[]
+  paymentRequests PaymentRequest[]
+
+  @@map("stores")
+}
+
+model User {
+  id             String       @id @default(cuid())
+  entraObjectId  String?      @unique @map("entra_object_id")
+  email          String       @unique
+  displayName    String       @map("display_name")
+  role           UserRole
+  department     String?
+  status         EntityStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  paymentRequests PaymentRequest[] @relation("RequesterRequests")
+  approvalSteps   ApprovalStep[]
+  auditEvents     AuditEvent[]
+  uploadedDocs    Document[]       @relation("UploadedBy")
+  confirmedLines  PaymentLine[]    @relation("ConfirmedBy")
+
+  @@map("users")
+}
+
+model Vendor {
+  id             String       @id @default(cuid())
+  vendorCode     String       @unique @map("vendor_code")
+  legalName      String       @map("legal_name")
+  normalizedName String       @map("normalized_name")
+  taxId          String?      @unique @map("tax_id")
+  vendorType     VendorType   @default(OTHER) @map("vendor_type")
+  status         EntityStatus @default(ACTIVE)
+  riskLevel      RiskLevel    @default(LOW) @map("risk_level")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  bankAccounts BankAccount[]
+  contracts    Contract[]
+  paymentLines PaymentLine[]
+
+  @@map("vendors")
+}
+
+model BankAccount {
+  id                 String                 @id @default(cuid())
+  vendorId           String                 @map("vendor_id")
+  bankName           String                 @map("bank_name")
+  bankCode           String?                @map("bank_code")
+  /// AES-encrypted account number — never log decrypted value
+  accountNumberEnc   String                 @map("account_number_enc")
+  /// SHA-256 hash for duplicate / match checks without exposing PAN
+  accountNumberHash  String                 @map("account_number_hash")
+  accountName        String                 @map("account_name")
+  validFrom          DateTime?              @map("valid_from")
+  validTo            DateTime?              @map("valid_to")
+  isActive           Boolean                @default(true) @map("is_active")
+  verificationStatus BankVerificationStatus @default(UNVERIFIED) @map("verification_status")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  vendor       Vendor        @relation(fields: [vendorId], references: [id])
+  paymentLines PaymentLine[]
+
+  @@index([accountNumberHash])
+  @@index([vendorId])
+  @@map("bank_accounts")
+}
+
+model Contract {
+  id              String         @id @default(cuid())
+  contractNumber  String         @unique @map("contract_number")
+  storeId         String         @map("store_id")
+  vendorId        String         @map("vendor_id")
+  contractType    ContractType   @map("contract_type")
+  startDate       DateTime       @map("start_date")
+  endDate         DateTime?      @map("end_date")
+  baseAmount      Decimal        @map("base_amount") @db.Decimal(18, 2)
+  currency        String         @default("VND")
+  /// Billing / escalation / tax rules (JSON)
+  billingRules    Json?          @map("billing_rules")
+  escalationRules Json?          @map("escalation_rules")
+  taxRules        Json?          @map("tax_rules")
+  status          ContractStatus @default(ACTIVE)
+  currentVersion  Int            @default(1) @map("current_version")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  store        Store         @relation(fields: [storeId], references: [id])
+  vendor       Vendor        @relation(fields: [vendorId], references: [id])
+  paymentLines PaymentLine[]
+  documents    Document[]
+
+  @@index([storeId])
+  @@index([vendorId])
+  @@map("contracts")
+}
+
+// ─── Core aggregate ──────────────────────────────────────────────────────────
+
+model PaymentRequest {
+  id                   String               @id @default(cuid())
+  requestNumber        String               @unique @map("request_number")
+  storeId              String               @map("store_id")
+  requesterId          String               @map("requester_id")
+  /// YYYY-MM
+  paymentPeriod        String               @map("payment_period")
+  currency             String               @default("VND")
+  /// Derived from sum of active lines — kept in sync by services
+  totalAmount          Decimal              @default(0) @map("total_amount") @db.Decimal(18, 2)
+  status               PaymentRequestStatus @default(DRAFT)
+  riskLevel            RiskLevel            @default(LOW) @map("risk_level")
+  currentApprovalLevel Int                  @default(0) @map("current_approval_level")
+  version              Int                  @default(1)
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  store            Store              @relation(fields: [storeId], references: [id])
+  requester        User               @relation("RequesterRequests", fields: [requesterId], references: [id])
+  lines            PaymentLine[]
+  documents        Document[]
+  approvalSteps    ApprovalStep[]
+  auditEvents      AuditEvent[]
+  validationResults ValidationResult[]
+  journalEntries   JournalEntry[]
+
+  @@index([storeId, paymentPeriod])
+  @@index([status])
+  @@map("payment_requests")
+}
+
+model PaymentLine {
+  id            String            @id @default(cuid())
+  requestId     String            @map("request_id")
+  lineNumber    Int               @map("line_number")
+  expenseType   ExpenseType       @map("expense_type")
+  vendorId      String            @map("vendor_id")
+  contractId    String?           @map("contract_id")
+  bankAccountId String?           @map("bank_account_id")
+  netAmount     Decimal           @map("net_amount") @db.Decimal(18, 2)
+  taxAmount     Decimal           @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grossAmount   Decimal           @map("gross_amount") @db.Decimal(18, 2)
+  currency      String            @default("VND")
+  invoiceNumber String?           @map("invoice_number")
+  invoiceDate   DateTime?         @map("invoice_date")
+  description   String?
+  status        PaymentLineStatus @default(DRAFT)
+  riskScore     Float?            @map("risk_score")
+  source        PaymentLineSource @default(MANUAL)
+  confirmedById String?           @map("confirmed_by")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  request           PaymentRequest     @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  vendor            Vendor             @relation(fields: [vendorId], references: [id])
+  contract          Contract?          @relation(fields: [contractId], references: [id])
+  bankAccount       BankAccount?       @relation(fields: [bankAccountId], references: [id])
+  confirmedBy       User?              @relation("ConfirmedBy", fields: [confirmedById], references: [id])
+  documents         Document[]
+  validationResults ValidationResult[]
+  journalEntries    JournalEntry[]
+  paymentRecords    PaymentRecord[]
+
+  @@unique([requestId, lineNumber])
+  @@index([vendorId])
+  @@index([invoiceNumber])
+  @@map("payment_lines")
+}
+
+// ─── Documents (Phase 2+) — schema ready ─────────────────────────────────────
+
+model Document {
+  id               String                   @id @default(cuid())
+  requestId        String                   @map("request_id")
+  lineId           String?                  @map("line_id")
+  contractId       String?                  @map("contract_id")
+  fileName         String                   @map("file_name")
+  mimeType         String                   @map("mime_type")
+  fileFormat       DocumentFormat           @map("file_format")
+  storageUri       String                   @map("storage_uri")
+  sha256Hash       String                   @map("sha256_hash")
+  documentType     DocumentType             @map("document_type")
+  processingStatus DocumentProcessingStatus @default(UPLOADED) @map("processing_status")
+  uploadedById     String                   @map("uploaded_by")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+
+  request     PaymentRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  line        PaymentLine?         @relation(fields: [lineId], references: [id])
+  contract    Contract?            @relation(fields: [contractId], references: [id])
+  uploadedBy  User                 @relation("UploadedBy", fields: [uploadedById], references: [id])
+  extractions DocumentExtraction[]
+
+  @@index([requestId])
+  @@index([sha256Hash])
+  @@map("documents")
+}
+
+model DocumentExtraction {
+  id                String           @id @default(cuid())
+  documentId        String           @map("document_id")
+  engine            String
+  extractionMethod  String           @map("extraction_method")
+  rawText           String?          @map("raw_text") @db.Text
+  structuredFields  Json?            @map("structured_fields")
+  pageData          Json?            @map("page_data")
+  confidenceOverall Float?           @map("confidence_overall")
+  status            ExtractionStatus @default(PENDING)
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("document_extractions")
+}
+
+// ─── Validation / workflow / accounting ──────────────────────────────────────
+
+model ValidationResult {
+  id                String             @id @default(cuid())
+  requestId         String?            @map("request_id")
+  lineId            String?            @map("line_id")
+  validationType    ValidationType     @map("validation_type")
+  severity          ValidationSeverity
+  message           String
+  evidence          Json?
+  recommendedAction String?            @map("recommended_action")
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  request PaymentRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  line    PaymentLine?    @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@index([lineId])
+  @@map("validation_results")
+}
+
+model ApprovalStep {
+  id             String             @id @default(cuid())
+  requestId      String             @map("request_id")
+  sequenceNumber Int                @map("sequence_number")
+  roleRequired   UserRole           @map("role_required")
+  status         ApprovalStepStatus @default(PENDING)
+  actorId        String?            @map("actor_id")
+  comments       String?
+  signatureHash  String?            @map("signature_hash")
+  signedAt       DateTime?          @map("signed_at")
+  actedAt        DateTime?          @map("acted_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  request PaymentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actor   User?          @relation(fields: [actorId], references: [id])
+
+  @@unique([requestId, sequenceNumber])
+  @@index([status, roleRequired])
+  @@map("approval_steps")
+}
+
+model AuditEvent {
+  id            String   @id @default(cuid())
+  requestId     String?  @map("request_id")
+  actorId       String?  @map("actor_id")
+  actorRole     UserRole? @map("actor_role")
+  action        String
+  entityType    String?  @map("entity_type")
+  entityId      String?  @map("entity_id")
+  payload       Json?
+  correlationId String?  @map("correlation_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  request PaymentRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  actor   User?           @relation(fields: [actorId], references: [id])
+
+  @@index([requestId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
+
+model JournalEntry {
+  id              String             @id @default(cuid())
+  requestId       String             @map("request_id")
+  lineId          String             @map("line_id")
+  journalDate     DateTime           @map("journal_date")
+  status          JournalEntryStatus @default(DRAFT)
+  legacyReference String?            @map("legacy_reference")
+  createdByType   String             @default("SYSTEM") @map("created_by_type")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  request PaymentRequest     @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  line    PaymentLine        @relation(fields: [lineId], references: [id])
+  lines   JournalEntryLine[]
+
+  @@index([requestId])
+  @@index([lineId])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id            String  @id @default(cuid())
+  journalId     String  @map("journal_id")
+  lineNumber    Int     @map("line_number")
+  accountCode   String  @map("account_code")
+  description   String?
+  debitAmount   Decimal @default(0) @map("debit_amount") @db.Decimal(18, 2)
+  creditAmount  Decimal @default(0) @map("credit_amount") @db.Decimal(18, 2)
+  costCenter    String? @map("cost_center")
+
+  journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@unique([journalId, lineNumber])
+  @@map("journal_entry_lines")
+}
+
+model PaymentRecord {
+  id            String              @id @default(cuid())
+  lineId        String              @map("line_id")
+  paymentDate   DateTime            @map("payment_date")
+  paidAmount    Decimal             @map("paid_amount") @db.Decimal(18, 2)
+  paymentMethod PaymentMethod       @default(BANK_TRANSFER) @map("payment_method")
+  referenceNo   String?             @map("reference_no")
+  status        PaymentRecordStatus @default(PENDING)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  line PaymentLine @relation(fields: [lineId], references: [id])
+
+  @@index([lineId])
+  @@map("payment_records")
+}

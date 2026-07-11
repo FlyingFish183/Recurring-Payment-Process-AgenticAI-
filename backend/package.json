@@ -11,18 +11,27 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
+    "db:test-iam": "tsx scripts/test-iam-connection.ts",
+    "prisma:migrate:iam": "./scripts/prisma-iam.sh migrate dev",
+    "prisma:seed:iam": "./scripts/prisma-iam.sh db seed",
     "db:reset": "prisma migrate reset --force"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1085.0",
+    "@aws-sdk/rds-signer": "^3.1085.0",
+    "@aws-sdk/s3-request-presigner": "^3.1085.0",
+    "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.10.1",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {
@@ -31,7 +40,9 @@
     "@types/jest": "^29.5.14",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.15.32",
+    "@types/pg": "^8.20.0",
     "jest": "^29.7.0",
     "prisma": "^6.10.1",
     "ts-jest": "^29.4.0",
