@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "db:test-iam": "tsx scripts/test-iam-connection.ts",
+    "worker:extract": "tsx scripts/extract-worker.ts",
     "prisma:migrate:iam": "./scripts/prisma-iam.sh migrate dev",
     "prisma:seed:iam": "./scripts/prisma-iam.sh db seed",
     "db:reset": "prisma migrate reset --force"
@@ -21,6 +22,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",
+    "@aws-sdk/client-sqs": "^3.1085.0",
     "@aws-sdk/rds-signer": "^3.1085.0",
     "@aws-sdk/s3-request-presigner": "^3.1085.0",
     "@prisma/adapter-pg": "^6.19.3",

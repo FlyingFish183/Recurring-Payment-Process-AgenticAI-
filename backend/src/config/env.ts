@@ -19,6 +19,12 @@ const schema = z.object({
 
   // S3 document storage (Phase 2)
   S3_BUCKET: z.string().min(1).default("kfc-document-pdf"),
+
+  // SQS FIFO — extract / validate worker
+  SQS_EXTRACT_QUEUE_URL: z
+    .string()
+    .url()
+    .default("https://sqs.us-east-1.amazonaws.com/293221314416/extract-worker.fifo"),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -6,6 +6,7 @@ import { authenticate, requireRole } from "../middleware/auth";
 import { asyncHandler } from "../middleware/errorHandler";
 import { paymentRequestDocumentHandlers } from "./documents";
 import { withViewUrls } from "../services/documents";
+import { submitPaymentRequestForProcessing } from "../services/submitRequest";
 import { AppError } from "../utils/errors";
 
 export const paymentRequestRouter = Router();
@@ -41,6 +42,18 @@ const requestInclude = {
   },
 };
 
+const lineInputSchema = z.object({
+  expenseType: z.enum(["RENT", "ELECTRICITY", "WATER", "SERVICE_FEE", "MAINTENANCE", "OTHER"]),
+  vendorId: z.string().min(1),
+  contractId: z.string().optional(),
+  bankAccountId: z.string().optional(),
+  netAmount: z.coerce.number().nonnegative(),
+  taxAmount: z.coerce.number().nonnegative().default(0),
+  invoiceNumber: z.string().optional(),
+  invoiceDate: z.coerce.date().optional(),
+  description: z.string().optional(),
+});
+
 paymentRequestRouter.post(
   "/",
   requireRole("REQUESTER"),
@@ -50,26 +63,76 @@ paymentRequestRouter.post(
         storeId: z.string().min(1),
         paymentPeriod: periodSchema,
         currency: z.string().default("VND"),
+        lines: z.array(lineInputSchema).min(1).optional(),
       })
       .parse(req.body);
 
     const store = await prisma.store.findUnique({ where: { id: body.storeId } });
     if (!store) throw new AppError(404, "NOT_FOUND", "Store not found");
 
+    if (body.lines?.length) {
+      const vendorIds = [...new Set(body.lines.map((l) => l.vendorId))];
+      const vendors = await prisma.vendor.findMany({
+        where: { id: { in: vendorIds } },
+        select: { id: true },
+      });
+      if (vendors.length !== vendorIds.length) {
+        throw new AppError(400, "VALIDATION_ERROR", "One or more vendors were not found");
+      }
+    }
+
     const count = await prisma.paymentRequest.count();
     const requestNumber = `PR-${body.paymentPeriod.replace("-", "")}-${String(count + 1).padStart(4, "0")}`;
 
-    const created = await prisma.paymentRequest.create({
-      data: {
-        requestNumber,
-        storeId: body.storeId,
-        requesterId: req.user!.id,
-        paymentPeriod: body.paymentPeriod,
-        currency: body.currency,
-        status: "DRAFT",
-        totalAmount: 0,
-      },
-      include: requestInclude,
+    const created = await prisma.$transaction(async (tx) => {
+      const request = await tx.paymentRequest.create({
+        data: {
+          requestNumber,
+          storeId: body.storeId,
+          requesterId: req.user!.id,
+          paymentPeriod: body.paymentPeriod,
+          currency: body.currency,
+          status: "DRAFT",
+          totalAmount: 0,
+        },
+      });
+
+      if (body.lines?.length) {
+        let total = new Prisma.Decimal(0);
+        for (let i = 0; i < body.lines.length; i++) {
+          const line = body.lines[i];
+          const grossAmount = line.netAmount + line.taxAmount;
+          total = total.add(grossAmount);
+          await tx.paymentLine.create({
+            data: {
+              requestId: request.id,
+              lineNumber: i + 1,
+              expenseType: line.expenseType,
+              vendorId: line.vendorId,
+              contractId: line.contractId,
+              bankAccountId: line.bankAccountId,
+              netAmount: line.netAmount,
+              taxAmount: line.taxAmount,
+              grossAmount,
+              invoiceNumber: line.invoiceNumber,
+              invoiceDate: line.invoiceDate,
+              description: line.description,
+              source: "MANUAL",
+              status: "DRAFT",
+              confirmedById: req.user!.id,
+            },
+          });
+        }
+        await tx.paymentRequest.update({
+          where: { id: request.id },
+          data: { totalAmount: total },
+        });
+      }
+
+      return tx.paymentRequest.findUniqueOrThrow({
+        where: { id: request.id },
+        include: requestInclude,
+      });
     });
 
     res.status(201).json(created);
@@ -147,24 +210,26 @@ paymentRequestRouter.post(
   ...paymentRequestDocumentHandlers.upload,
 );
 
+/** Submit for AI extract/validate — enqueues FIFO SQS message for the worker. */
+paymentRequestRouter.post(
+  "/:id/submit",
+  requireRole("REQUESTER"),
+  asyncHandler(async (req, res) => {
+    const requestId = String(req.params.id);
+    const result = await submitPaymentRequestForProcessing({
+      requestId,
+      requesterId: req.user!.id,
+    });
+    res.json(result);
+  }),
+);
+
 paymentRequestRouter.post(
   "/:id/lines",
   requireRole("REQUESTER"),
   asyncHandler(async (req, res) => {
     const requestId = String(req.params.id);
-    const body = z
-      .object({
-        expenseType: z.enum(["RENT", "ELECTRICITY", "WATER", "SERVICE_FEE", "MAINTENANCE", "OTHER"]),
-        vendorId: z.string().min(1),
-        contractId: z.string().optional(),
-        bankAccountId: z.string().optional(),
-        netAmount: z.coerce.number().nonnegative(),
-        taxAmount: z.coerce.number().nonnegative().default(0),
-        invoiceNumber: z.string().optional(),
-        invoiceDate: z.coerce.date().optional(),
-        description: z.string().optional(),
-      })
-      .parse(req.body);
+    const body = lineInputSchema.parse(req.body);
 
     const request = await prisma.paymentRequest.findUnique({ where: { id: requestId } });
     if (!request) throw new AppError(404, "NOT_FOUND", "Payment request not found");

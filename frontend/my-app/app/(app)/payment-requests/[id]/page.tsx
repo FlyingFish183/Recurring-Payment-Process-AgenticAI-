@@ -199,8 +199,8 @@ export default function PaymentRequestDetailPage() {
         <div>
           <h2 className="font-display text-2xl font-semibold">Payment lines</h2>
           <p className="mt-1 text-sm text-muted">
-            Each line can have an XML, PDF, or image document. Click a line to
-            upload if none is attached yet.
+            Review attached documents or upload one if a line is still missing a
+            file. Use the form below only when you need an extra line.
           </p>
         </div>
         <PaymentLineGrid
@@ -219,9 +219,9 @@ export default function PaymentRequestDetailPage() {
 
       {canEdit ? (
         <section className="rounded border border-line bg-surface p-5">
-          <h3 className="font-display text-xl font-semibold">Add manual line</h3>
+          <h3 className="font-display text-xl font-semibold">Add another line</h3>
           <p className="mt-1 text-sm text-muted">
-            Optionally attach the invoice file with this line.
+            Optional — for lines you did not include when creating the request.
           </p>
           <form
             onSubmit={(e) => void addLine(e)}

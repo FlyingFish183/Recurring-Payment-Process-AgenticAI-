@@ -172,7 +172,7 @@ export default function DashboardPage() {
               ) : recent.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-muted">
-                    No payment requests yet. Create a DRAFT to get started.
+                    No payment requests yet. Create a request to get started.
                   </td>
                 </tr>
               ) : (
