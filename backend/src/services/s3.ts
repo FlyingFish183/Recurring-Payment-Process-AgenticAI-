@@ -55,3 +55,22 @@ export async function getPresignedViewUrl(storageUri: string): Promise<string | 
     { expiresIn: VIEW_URL_EXPIRES_SECONDS },
   );
 }
+
+/** Download object bytes from `s3://bucket/key`. */
+export async function downloadFromS3(storageUri: string): Promise<Buffer> {
+  const parsed = parseS3Uri(storageUri);
+  if (!parsed) {
+    throw new Error(`Invalid S3 URI: ${storageUri}`);
+  }
+
+  const res = await s3.send(
+    new GetObjectCommand({
+      Bucket: parsed.bucket,
+      Key: parsed.key,
+    }),
+  );
+
+  const bytes = await res.Body?.transformToByteArray();
+  if (!bytes) throw new Error(`Empty S3 object: ${storageUri}`);
+  return Buffer.from(bytes);
+}
