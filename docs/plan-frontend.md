@@ -1,97 +1,101 @@
 # Frontend Implementation Plan
 
 **Owner**: Frontend developer  
-**Spec**: [spec.md](./spec.md) · **Shared**: [plan.md](./plan.md) · **Pair**: [plan-backend.md](./plan-backend.md)
+**Blueprint**: [KFC_Recurring_Payment_System_Technical_Blueprint_v1.1.docx](./KFC_Recurring_Payment_System_Technical_Blueprint_v1.1.docx) §16  
+**Entity map**: [plan.md — Core business entities](./plan.md) · **Pair**: [plan-backend.md](./plan-backend.md)
 
 Stack: Next.js 16 (App Router), React 19, TypeScript, TailwindCSS v4, Geist fonts.
 
 ---
 
-## Goals
+## UI must reflect blueprint aggregate
 
-1. Role-based UI for Requester, HOD, F&A, CA, Cashier, Admin (mock Entra via role switcher).
-2. Screens for upload → request dossier → 5-level approvals → admin master data → NL analytics.
-3. Consume backend API; use **MSW** mocks so UI progress is not blocked by AWS/backend.
+Show **Payment Request → Payment Lines → Documents** (not a flat “invoice-only” page).
 
----
-
-## Phase 1 — Foundation
-
-### Tasks
-- [ ] App shell: `layout.tsx`, nav by role, dark/light toggle, Geist typography.
-- [ ] `lib/api.ts`: base URL from `NEXT_PUBLIC_API_URL`, typed fetch helpers, error handling.
-- [ ] `lib/auth.tsx` (or similar): login, store token, `useUser()`, role switcher for demo.
-- [ ] Pages scaffolding (empty states OK):
-  - `/` dashboard
-  - `/requests`, `/requests/new`, `/requests/[id]`
-  - `/approvals`
-  - `/admin` (stores, vendors, contracts)
-  - `/analytics`
-- [ ] Shared UI: status badges, loading/error states, page headers.
-- [ ] MSW handlers mirroring [plan.md](./plan.md) contract with fake data.
-
-### Done when
-- Can switch roles and navigate all routes; API client hits mock or live backend via env.
+| Blueprint screen (§16) | Route (suggested) | Primary role |
+|------------------------|-------------------|--------------|
+| Payment Inbox | `/` or `/payment-requests` | All |
+| Create Request | `/payment-requests/new` | Requester |
+| AI Line Proposal Review | `/payment-requests/[id]/lines` | Requester |
+| Request Detail | `/payment-requests/[id]` | All |
+| Line Review Drawer | drawer on detail | All |
+| Approval Workspace | `/approvals` | HOD, F&A, CA, Cashier |
+| Accounting Workspace | `/accounting` or tab on detail | CA, F&A |
+| Audit Timeline | panel on detail | All |
+| Master data | `/master-data` | F&A |
+| Analytics | `/analytics` | F&A |
 
 ---
 
-## Phase 2 — Invoice upload & payment requests
+## Role actors (UI)
 
-### Tasks
-- [ ] `/requests/new`: drag-drop PDF/XML upload, store picker, submit.
-- [ ] Upload progress + extraction result summary (amount, tax, line items table).
-- [ ] Validation / anomaly callouts (match, mismatch, duplicate, over-budget).
-- [ ] `/requests`: list with filters (status, store).
-- [ ] `/requests/[id]`: dossier view — invoice fields, line items, S3/source link, flags, workflow progress bar (5 steps).
-- [ ] Submit request CTA (Requester).
+| Enum | Actor | Team | Nav / actions |
+|------|--------|------|---------------|
+| `REQUESTER` | Requester | Business / store | Create, upload, confirm lines, submit |
+| `HOD` | HOD | Business leadership | Approvals |
+| `FA` | F&A | Finance + Accounting | Approvals, master data, analytics |
+| `CA` | **Chief Accountant** | Accounting | Approvals, journal readiness, sign |
+| `CASHIER` | Cashier | Treasury | Approvals, payment confirm, sign |
 
-### Done when
-- Happy path UI: upload → see structured invoice → create/submit request (mock or real API).
-
----
-
-## Phase 3 — Approvals UX
-
-### Tasks
-- [ ] `/approvals`: pending queue for current role (empty state when none).
-- [ ] Detail actions: Approve (optional comment), Reject (required reason), Sign when applicable.
-- [ ] Workflow progress component: highlight current step; history timeline from audit events.
-- [ ] Disable actions if user role ≠ current step.
-- [ ] Toast / inline feedback on success/failure.
-
-### Done when
-- Demo can switch roles and clear one request through all five levels in the UI.
+Hide nav the current actor cannot use.
 
 ---
 
-## Phase 4 — Admin & analytics
+## Phase 1 — Shell + inbox + draft request
 
-### Tasks
-- [ ] `/admin`: tabs or sections for Stores, Vendors, Contracts (list + create/edit forms).
-- [ ] `/analytics`:
-  - Prompt input (example chips: store + location invoices).
-  - Show **generated SQL** (read-only code block).
-  - Confirm/run if product decision requires it; else show results after backend gate.
-  - Results table (columns + rows); empty/error states for rejected SQL.
-- [ ] Export button on completed request → download CSV/JSON.
-- [ ] Dashboard widgets: counts by status, pending for my role (from list APIs).
+- [ ] Role switcher (5 actors); team labels.
+- [ ] Payment Inbox: filter store, period, status, risk, amount.
+- [ ] Create Request: store + period → DRAFT.
+- [ ] Request Detail shell: header, empty line grid, totals.
 
-### Done when
-- Admin can manage master data and run an NL analytics query with visible SQL + table.
+**Done when**: Can create/list/open a DRAFT (mock or API).
 
 ---
 
-## Phase 5 — Polish & demo
+## Phase 2 — Documents
 
-### Tasks
-- [ ] Responsive layout (desktop-first, usable on laptop for demo).
-- [ ] RTL/loading skeletons on slow extract.
-- [ ] Component tests for status badge + workflow progress (Jest + RTL).
-- [ ] Keep MSW as fallback when `NEXT_PUBLIC_USE_MOCKS=true`.
-- [ ] Short demo script in `frontend/my-app/README.md` (click path by role).
+- [ ] Upload XML/PDF on request; show processing status chips.
+- [ ] Document list with type (E_INVOICE, CONTRACT, …) and request vs line association.
 
-### Done when
-- Full UI walkthrough works against mocks alone; flips to live API with one env change.
+**Done when**: Uploaded files appear on request detail.
+
+---
+
+## Phase 3–4 — Extraction + line proposal + validation
+
+- [ ] Extraction preview: structured fields + searchable full text.
+- [ ] AI Line Proposal Review: side-by-side fields / confidence / confirm-edit.
+- [ ] Line grid: expense type, vendor, contract, gross, status, risk.
+- [ ] Validation banners from `VALIDATION_RESULT` (severity colors; blocking explained).
+
+**Done when**: Confirm lines → total recalculates → validations visible before submit.
+
+---
+
+## Phase 5 — Approval workspace
+
+- [ ] Pending queue by role.
+- [ ] Actions: Approve, Reject, Request changes; signature UX for CA/Cashier.
+- [ ] Workflow progress: Requester → HOD → F&A → CA → Cashier.
+- [ ] Audit Timeline from `AUDIT_EVENT`.
+
+**Done when**: Role-switch demo clears one request through five steps.
+
+---
+
+## Phase 6 — Accounting + payment
+
+- [ ] Accounting workspace: GL suggestions, debit/credit balance check.
+- [ ] Export download; Cashier payment confirm → PaymentRecord display.
+- [ ] Dashboard widgets by role (pending, high-risk, ready-to-pay).
+
+---
+
+## Phase 7 — Analytics + polish
+
+- [ ] F&A NL analytics (SQL preview + results).
+- [ ] MSW fixtures matching blueprint aggregate JSON (see plan.md example PR-2026-07152).
+- [ ] Demo script by role.
 
 ---
 
@@ -100,63 +104,42 @@ Stack: Next.js 16 (App Router), React 19, TypeScript, TailwindCSS v4, Geist font
 ```
 frontend/my-app/
 ├── app/
-│   ├── layout.tsx
-│   ├── page.tsx                 # Dashboard
-│   ├── login/page.tsx
-│   ├── requests/
-│   │   ├── page.tsx
+│   ├── page.tsx                      # Payment Inbox
+│   ├── payment-requests/
 │   │   ├── new/page.tsx
-│   │   └── [id]/page.tsx
+│   │   └── [id]/page.tsx            # Detail + drawers
 │   ├── approvals/page.tsx
-│   ├── admin/page.tsx
+│   ├── accounting/page.tsx           # optional dedicated
+│   ├── master-data/page.tsx
 │   ├── analytics/page.tsx
-│   └── globals.css
+│   └── login/page.tsx
 ├── components/
-│   ├── AppNav.tsx
 │   ├── RoleSwitcher.tsx
+│   ├── PaymentLineGrid.tsx
+│   ├── DocumentList.tsx
+│   ├── ExtractionPreview.tsx
+│   ├── LineProposalReview.tsx
+│   ├── ValidationBanner.tsx
 │   ├── WorkflowProgress.tsx
-│   ├── InvoiceLineTable.tsx
-│   ├── AnomalyBanner.tsx
-│   ├── StatusBadge.tsx
-│   ├── SqlPreview.tsx
-│   └── ResultsTable.tsx
-├── lib/
-│   ├── api.ts
-│   ├── auth.tsx
-│   └── types.ts                 # Align with backend DTOs
+│   ├── AuditTimeline.tsx
+│   ├── JournalBalance.tsx
+│   └── …
+├── lib/ { api.ts, auth.tsx, roles.ts, types.ts }
 └── mocks/
-    ├── handlers.ts
-    └── data.ts
 ```
 
 ---
 
-## UI notes (from spec)
+## Types to mirror (from blueprint)
 
-- Modern dark/light mode; progress-based workflow bars.
-- Card-based metrics on dashboard (OK for app UI; this is an internal tool, not a marketing landing page).
-- Show validation/anomaly states clearly (match vs flag).
-- Analytics: always surface generated SQL next to results.
+Prefer names: `PaymentRequest`, `PaymentLine`, `Document`, `DocumentExtraction`, `ValidationResult`, `ApprovalStep`, `JournalEntry`, `PaymentRecord`, `AuditEvent` — **not** a separate root `Invoice` entity in the UI model.
 
----
-
-## Dependency on backend
-
-| You need | Backend phase | Until then |
-|----------|---------------|------------|
-| Auth token + roles | 1 | MSW login |
-| Seeded stores/vendors | 1 | MSW lists |
-| Upload + invoice JSON | 2 | MSW extract fixture |
-| Approvals + audit | 3 | MSW state machine in memory |
-| Analytics `{ sql, rows }` | 4 | MSW fixed SQL + sample rows |
-| Export blob | 4 | MSW CSV string |
-
-At each sync checkpoint in [plan.md](./plan.md), replace MSW handlers with live calls for that slice.
+Expense types: `RENT | ELECTRICITY | WATER | SERVICE_FEE | MAINTENANCE | OTHER`.
 
 ---
 
-## Out of scope (unless asked)
+## Out of scope
 
-- Real Microsoft Entra MSAL production wiring (role switcher is enough).
-- Building Prisma/schema or calling AWS from the browser.
-- Designing the SQL safety rules (backend-owned; UI only displays outcomes).
+- Sixth Admin-only console (unless product later adds blueprint `ADMIN`).
+- Calling AWS from the browser.
+- Authoritative editing of bank account plaintext (mask; authorized roles only).
