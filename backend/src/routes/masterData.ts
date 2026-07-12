@@ -11,6 +11,9 @@ export const masterDataRouter = Router();
 
 masterDataRouter.use(authenticate);
 
+/** F&A + Chief Accountant manage vendors / banks / contracts. */
+const MASTER_EDITOR = ["FA", "CA"] as const;
+
 const pagination = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(50),
@@ -31,6 +34,20 @@ function encryptAccount(plain: string): { enc: string; hash: string } {
   };
 }
 
+const bankAccountSelect = {
+  id: true,
+  vendorId: true,
+  bankName: true,
+  bankCode: true,
+  accountName: true,
+  accountNumberHash: true,
+  isActive: true,
+  verificationStatus: true,
+  validFrom: true,
+  validTo: true,
+  createdAt: true,
+} as const;
+
 // ── Stores ───────────────────────────────────────────────────────────────────
 
 masterDataRouter.get(
@@ -42,6 +59,15 @@ masterDataRouter.get(
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { storeCode: "asc" },
+        select: {
+          id: true,
+          storeCode: true,
+          storeName: true,
+          costCenterCode: true,
+          region: true,
+          address: true,
+          status: true,
+        },
       }),
       prisma.store.count(),
     ]);
@@ -54,7 +80,7 @@ masterDataRouter.get(
 
 masterDataRouter.post(
   "/stores",
-  requireRole("FA"),
+  requireRole(...MASTER_EDITOR),
   asyncHandler(async (req, res) => {
     const body = z
       .object({
@@ -81,7 +107,21 @@ masterDataRouter.get(
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { vendorCode: "asc" },
-        include: { bankAccounts: { where: { isActive: true }, take: 5 } },
+        select: {
+          id: true,
+          vendorCode: true,
+          legalName: true,
+          taxId: true,
+          vendorType: true,
+          riskLevel: true,
+          status: true,
+          bankAccounts: {
+            where: { isActive: true },
+            orderBy: { createdAt: "desc" },
+            select: bankAccountSelect,
+          },
+          _count: { select: { contracts: true, paymentLines: true } },
+        },
       }),
       prisma.vendor.count(),
     ]);
@@ -94,14 +134,16 @@ masterDataRouter.get(
 
 masterDataRouter.post(
   "/vendors",
-  requireRole("FA"),
+  requireRole(...MASTER_EDITOR),
   asyncHandler(async (req, res) => {
     const body = z
       .object({
         vendorCode: z.string().min(1),
         legalName: z.string().min(1),
         taxId: z.string().optional(),
-        vendorType: z.enum(["LANDLORD", "UTILITY", "SERVICE", "SUPPLIER", "OTHER"]).default("OTHER"),
+        vendorType: z
+          .enum(["LANDLORD", "UTILITY", "SERVICE", "SUPPLIER", "OTHER"])
+          .default("OTHER"),
       })
       .parse(req.body);
     const vendor = await prisma.vendor.create({
@@ -114,6 +156,51 @@ masterDataRouter.post(
   }),
 );
 
+masterDataRouter.delete(
+  "/vendors/:id",
+  requireRole(...MASTER_EDITOR),
+  asyncHandler(async (req, res) => {
+    const id = String(req.params.id);
+    const vendor = await prisma.vendor.findUnique({ where: { id } });
+    if (!vendor) throw new AppError(404, "NOT_FOUND", "Vendor not found");
+
+    const [lineCount, contractCount] = await Promise.all([
+      prisma.paymentLine.count({ where: { vendorId: id } }),
+      prisma.contract.count({ where: { vendorId: id } }),
+    ]);
+
+    if (lineCount > 0 || contractCount > 0) {
+      await prisma.$transaction([
+        prisma.vendor.update({
+          where: { id },
+          data: { status: "INACTIVE" },
+        }),
+        prisma.bankAccount.updateMany({
+          where: { vendorId: id },
+          data: { isActive: false },
+        }),
+        prisma.contract.updateMany({
+          where: { vendorId: id, status: "ACTIVE" },
+          data: { status: "TERMINATED" },
+        }),
+      ]);
+      res.json({
+        id,
+        deleted: false,
+        deactivated: true,
+        reason: "Vendor has payment history or contracts — marked INACTIVE",
+      });
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.bankAccount.deleteMany({ where: { vendorId: id } }),
+      prisma.vendor.delete({ where: { id } }),
+    ]);
+    res.json({ id, deleted: true, deactivated: false });
+  }),
+);
+
 masterDataRouter.get(
   "/vendors/:id/bank-accounts",
   asyncHandler(async (req, res) => {
@@ -121,20 +208,7 @@ masterDataRouter.get(
     const data = await prisma.bankAccount.findMany({
       where: { vendorId },
       orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        vendorId: true,
-        bankName: true,
-        bankCode: true,
-        accountName: true,
-        accountNumberHash: true,
-        isActive: true,
-        verificationStatus: true,
-        validFrom: true,
-        validTo: true,
-        createdAt: true,
-        // never return accountNumberEnc decrypted
-      },
+      select: bankAccountSelect,
     });
     res.json({ data });
   }),
@@ -142,7 +216,7 @@ masterDataRouter.get(
 
 masterDataRouter.post(
   "/vendors/:id/bank-accounts",
-  requireRole("FA"),
+  requireRole(...MASTER_EDITOR),
   asyncHandler(async (req, res) => {
     const vendorId = String(req.params.id);
     const body = z
@@ -169,18 +243,37 @@ masterDataRouter.post(
         isActive: true,
         verificationStatus: "UNVERIFIED",
       },
-      select: {
-        id: true,
-        vendorId: true,
-        bankName: true,
-        bankCode: true,
-        accountName: true,
-        accountNumberHash: true,
-        isActive: true,
-        verificationStatus: true,
-      },
+      select: bankAccountSelect,
     });
     res.status(201).json(account);
+  }),
+);
+
+masterDataRouter.delete(
+  "/bank-accounts/:id",
+  requireRole(...MASTER_EDITOR),
+  asyncHandler(async (req, res) => {
+    const id = String(req.params.id);
+    const account = await prisma.bankAccount.findUnique({ where: { id } });
+    if (!account) throw new AppError(404, "NOT_FOUND", "Bank account not found");
+
+    const used = await prisma.paymentLine.count({ where: { bankAccountId: id } });
+    if (used > 0) {
+      await prisma.bankAccount.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      res.json({
+        id,
+        deleted: false,
+        deactivated: true,
+        reason: "Account is used on payment lines — deactivated",
+      });
+      return;
+    }
+
+    await prisma.bankAccount.delete({ where: { id } });
+    res.json({ id, deleted: true, deactivated: false });
   }),
 );
 
@@ -189,13 +282,17 @@ masterDataRouter.post(
 masterDataRouter.get(
   "/contracts",
   asyncHandler(async (req, res) => {
-    const query = pagination.extend({
-      storeId: z.string().optional(),
-      status: z.enum(["DRAFT", "ACTIVE", "EXPIRED", "TERMINATED"]).optional(),
-    }).parse(req.query);
+    const query = pagination
+      .extend({
+        storeId: z.string().optional(),
+        vendorId: z.string().optional(),
+        status: z.enum(["DRAFT", "ACTIVE", "EXPIRED", "TERMINATED"]).optional(),
+      })
+      .parse(req.query);
 
     const where = {
       ...(query.storeId ? { storeId: query.storeId } : {}),
+      ...(query.vendorId ? { vendorId: query.vendorId } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
 
@@ -227,7 +324,7 @@ masterDataRouter.get(
 
 masterDataRouter.post(
   "/contracts",
-  requireRole("FA"),
+  requireRole(...MASTER_EDITOR),
   asyncHandler(async (req, res) => {
     const body = z
       .object({
@@ -257,7 +354,39 @@ masterDataRouter.post(
         status: "ACTIVE",
         currentVersion: 1,
       },
+      include: {
+        store: { select: { id: true, storeCode: true, storeName: true } },
+        vendor: { select: { id: true, vendorCode: true, legalName: true } },
+      },
     });
     res.status(201).json(contract);
+  }),
+);
+
+masterDataRouter.delete(
+  "/contracts/:id",
+  requireRole(...MASTER_EDITOR),
+  asyncHandler(async (req, res) => {
+    const id = String(req.params.id);
+    const contract = await prisma.contract.findUnique({ where: { id } });
+    if (!contract) throw new AppError(404, "NOT_FOUND", "Contract not found");
+
+    const used = await prisma.paymentLine.count({ where: { contractId: id } });
+    if (used > 0) {
+      await prisma.contract.update({
+        where: { id },
+        data: { status: "TERMINATED" },
+      });
+      res.json({
+        id,
+        deleted: false,
+        deactivated: true,
+        reason: "Contract is used on payment lines — marked TERMINATED",
+      });
+      return;
+    }
+
+    await prisma.contract.delete({ where: { id } });
+    res.json({ id, deleted: true, deactivated: false });
   }),
 );

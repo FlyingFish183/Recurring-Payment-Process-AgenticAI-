@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, apiForm } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatVnd } from "@/lib/format";
 import type {
   Document,
   ExpenseType,
@@ -28,9 +27,6 @@ type LineDraft = {
   key: string;
   expenseType: ExpenseType;
   vendorId: string;
-  netAmount: string;
-  taxAmount: string;
-  invoiceNumber: string;
   description: string;
   file: File | null;
 };
@@ -40,9 +36,6 @@ function newLineDraft(vendorId = ""): LineDraft {
     key: crypto.randomUUID(),
     expenseType: "RENT",
     vendorId,
-    netAmount: "",
-    taxAmount: "0",
-    invoiceNumber: "",
     description: "",
     file: null,
   };
@@ -90,16 +83,6 @@ export default function NewPaymentRequestPage() {
       );
   }, []);
 
-  const estimatedTotal = useMemo(
-    () =>
-      lines.reduce((sum, line) => {
-        const net = Number(line.netAmount) || 0;
-        const tax = Number(line.taxAmount) || 0;
-        return sum + net + tax;
-      }, 0),
-    [lines],
-  );
-
   function updateLine(key: string, patch: Partial<LineDraft>) {
     setLines((prev) =>
       prev.map((line) => (line.key === key ? { ...line, ...patch } : line)),
@@ -126,8 +109,8 @@ export default function NewPaymentRequestPage() {
         setError("Each line needs a vendor.");
         return;
       }
-      if (line.netAmount === "" || Number(line.netAmount) < 0) {
-        setError("Each line needs a valid net amount.");
+      if (!line.file) {
+        setError("Each line needs an invoice file (XML, PDF, or image).");
         return;
       }
     }
@@ -145,24 +128,17 @@ export default function NewPaymentRequestPage() {
           lines: lines.map((line) => ({
             expenseType: line.expenseType,
             vendorId: line.vendorId,
-            netAmount: Number(line.netAmount),
-            taxAmount: Number(line.taxAmount || 0),
-            invoiceNumber: line.invoiceNumber || undefined,
             description: line.description || undefined,
           })),
         }),
       });
 
       const createdLines = created.lines ?? [];
-      const uploads = lines
-        .map((line, index) => ({ file: line.file, lineId: createdLines[index]?.id }))
-        .filter((item): item is { file: File; lineId: string } =>
-          Boolean(item.file && item.lineId),
-        );
-
-      for (let i = 0; i < uploads.length; i++) {
-        const { file, lineId } = uploads[i];
-        setProgress(`Uploading document ${i + 1} of ${uploads.length}…`);
+      for (let i = 0; i < lines.length; i++) {
+        const file = lines[i].file;
+        const lineId = createdLines[i]?.id;
+        if (!file || !lineId) continue;
+        setProgress(`Uploading invoice ${i + 1} of ${lines.length}…`);
         const form = new FormData();
         form.append("file", file);
         form.append("documentType", "E_INVOICE");
@@ -170,7 +146,7 @@ export default function NewPaymentRequestPage() {
         await apiForm<Document>(`/payment-requests/${created.id}/documents`, form);
       }
 
-      setProgress("Queuing extract worker…");
+      setProgress("Queuing extract & auto-fill…");
       await api(`/payment-requests/${created.id}/submit`, { method: "POST" });
 
       router.push(`/payment-requests/${created.id}`);
@@ -197,8 +173,8 @@ export default function NewPaymentRequestPage() {
           New payment request
         </h1>
         <p className="mt-2 text-muted">
-          Fill in the store, period, and payment lines on this page, then submit
-          once.
+          Enter expense type, vendor, description, and the invoice file. Amounts
+          and invoice number are filled automatically after submit.
         </p>
       </div>
 
@@ -231,12 +207,6 @@ export default function NewPaymentRequestPage() {
                 onChange={(e) => setPeriod(e.target.value)}
               />
             </label>
-            <div className="flex flex-col justify-end text-sm">
-              <span className="mb-1 font-medium text-muted">Estimated total</span>
-              <span className="font-display text-2xl font-semibold tabular-nums">
-                {formatVnd(estimatedTotal)}
-              </span>
-            </div>
           </div>
         </section>
 
@@ -245,7 +215,7 @@ export default function NewPaymentRequestPage() {
             <div>
               <h2 className="font-display text-xl font-semibold">Payment lines</h2>
               <p className="mt-1 text-sm text-muted">
-                Add every expense line before submitting. Documents are optional.
+                Invoice file required per line — OCR fills amounts and invoice #.
               </p>
             </div>
             <button
@@ -314,44 +284,7 @@ export default function NewPaymentRequestPage() {
                       ))}
                     </select>
                   </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium">Net amount (VND)</span>
-                    <input
-                      required
-                      type="number"
-                      min={0}
-                      step={1}
-                      className="w-full rounded border border-line bg-paper px-3 py-2"
-                      value={line.netAmount}
-                      onChange={(e) =>
-                        updateLine(line.key, { netAmount: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium">Tax amount (VND)</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      className="w-full rounded border border-line bg-paper px-3 py-2"
-                      value={line.taxAmount}
-                      onChange={(e) =>
-                        updateLine(line.key, { taxAmount: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium">Invoice number</span>
-                    <input
-                      className="w-full rounded border border-line bg-paper px-3 py-2"
-                      value={line.invoiceNumber}
-                      onChange={(e) =>
-                        updateLine(line.key, { invoiceNumber: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="block text-sm">
+                  <label className="block text-sm sm:col-span-2">
                     <span className="mb-1 block font-medium">Description</span>
                     <input
                       className="w-full rounded border border-line bg-paper px-3 py-2"
@@ -359,13 +292,15 @@ export default function NewPaymentRequestPage() {
                       onChange={(e) =>
                         updateLine(line.key, { description: e.target.value })
                       }
+                      placeholder="Optional note for approvers"
                     />
                   </label>
                   <label className="block text-sm sm:col-span-2">
                     <span className="mb-1 block font-medium">
-                      Document (optional) — XML / PDF / image
+                      Invoice file (required) — XML / PDF / image
                     </span>
                     <input
+                      required
                       type="file"
                       accept=".xml,.pdf,image/*,application/pdf,application/xml,text/xml"
                       className="w-full rounded border border-line bg-paper px-3 py-2"
@@ -396,7 +331,8 @@ export default function NewPaymentRequestPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
           <p className="text-sm text-muted">
-            {lines.length} line{lines.length === 1 ? "" : "s"} · {formatVnd(estimatedTotal)}
+            {lines.length} line{lines.length === 1 ? "" : "s"} · OCR then auto-sends
+            to HOD
           </p>
           <button
             type="submit"

@@ -18,8 +18,13 @@ function createPrismaClient(): PrismaClient {
       user: env.DB_USER,
       database: env.DB_NAME,
       password: getIamDbPassword,
-      ssl: { rejectUnauthorized: false }, // hackathon: encrypt, skip CA fuss
-      max: 5,
+      ssl: { rejectUnauthorized: false },
+      // Warm pool: fewer cold IAM + TCP handshakes under concurrent UI loads
+      max: 10,
+      min: 2,
+      idleTimeoutMillis: 60_000,
+      connectionTimeoutMillis: 15_000,
+      allowExitOnIdle: false,
     });
 
   if (env.NODE_ENV !== "production") {
@@ -32,10 +37,34 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+function hasStoreAssignment(client: PrismaClient | undefined): boolean {
+  return Boolean(client && (client as { storeAssignment?: unknown }).storeAssignment);
+}
 
-if (env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+/** Recreate after schema generate — hot reload keeps a stale singleton. */
+function getClient(): PrismaClient {
+  if (hasStoreAssignment(globalForPrisma.prisma)) {
+    return globalForPrisma.prisma!;
+  }
+  if (globalForPrisma.prisma) {
+    void globalForPrisma.prisma.$disconnect().catch(() => undefined);
+  }
+  const client = createPrismaClient();
+  if (env.NODE_ENV !== "production") {
+    globalForPrisma.prisma = client;
+  }
+  return client;
+}
+
+export const prisma = getClient();
+
+/** Best-effort warm connections so the first UI click is not a cold IAM handshake. */
+export async function warmDbPool(): Promise<void> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (err) {
+    console.warn("[db] warm failed", err instanceof Error ? err.message : err);
+  }
 }
 
 export async function disconnectDb(): Promise<void> {
@@ -44,4 +73,5 @@ export async function disconnectDb(): Promise<void> {
     await globalForPrisma.pgPool.end();
     globalForPrisma.pgPool = undefined;
   }
+  globalForPrisma.prisma = undefined;
 }

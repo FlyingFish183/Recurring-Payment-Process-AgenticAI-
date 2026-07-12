@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { AnalyticsChat } from "@/components/AnalyticsChat";
 import { useAuth } from "@/lib/auth";
 import { canAccess, NAV_ITEMS, ROLE_LABELS } from "@/lib/roles";
 
@@ -86,6 +87,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>
+      <AnalyticsChat />
     </div>
   );
 }

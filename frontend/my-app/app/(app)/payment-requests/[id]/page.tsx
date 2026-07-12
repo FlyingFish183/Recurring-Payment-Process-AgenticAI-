@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { ApprovalPanel } from "@/components/ApprovalPanel";
 import { PaymentLineGrid } from "@/components/PaymentLineGrid";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api, apiForm } from "@/lib/api";
@@ -46,11 +47,9 @@ export default function PaymentRequestDetailPage() {
 
   const [expenseType, setExpenseType] = useState<ExpenseType>("RENT");
   const [vendorId, setVendorId] = useState("");
-  const [netAmount, setNetAmount] = useState("");
-  const [taxAmount, setTaxAmount] = useState("0");
-  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [description, setDescription] = useState("");
   const [newLineFile, setNewLineFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [lineUploadFile, setLineUploadFile] = useState<File | null>(null);
 
   const load = useCallback(async () => {
@@ -86,6 +85,10 @@ export default function PaymentRequestDetailPage() {
   async function addLine(e: React.FormEvent) {
     e.preventDefault();
     if (!request) return;
+    if (!newLineFile) {
+      setError("Attach an invoice file for this line.");
+      return;
+    }
     setAdding(true);
     setError(null);
     try {
@@ -96,21 +99,13 @@ export default function PaymentRequestDetailPage() {
           body: JSON.stringify({
             expenseType,
             vendorId,
-            netAmount: Number(netAmount),
-            taxAmount: Number(taxAmount || 0),
-            invoiceNumber: invoiceNumber || undefined,
             description: description || undefined,
           }),
         },
       );
 
-      if (newLineFile) {
-        await uploadForLine(result.line.id, newLineFile);
-      }
+      await uploadForLine(result.line.id, newLineFile);
 
-      setNetAmount("");
-      setTaxAmount("0");
-      setInvoiceNumber("");
       setDescription("");
       setNewLineFile(null);
       setSelectedLineId(result.line.id);
@@ -137,6 +132,20 @@ export default function PaymentRequestDetailPage() {
     }
   }
 
+  async function submitForProcessing() {
+    if (!request) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api(`/payment-requests/${request.id}/submit`, { method: "POST" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Submit failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (loading && !request) {
     return <p className="text-muted">Loading request…</p>;
   }
@@ -148,11 +157,21 @@ export default function PaymentRequestDetailPage() {
     );
   }
 
-  const canEdit =
-    user?.role === "REQUESTER" && EDITABLE_STATUSES.has(request.status);
   const lines = request.lines ?? [];
   const documents = request.documents ?? [];
   const sumLines = lines.reduce((s, l) => s + Number(l.grossAmount), 0);
+  const canEdit =
+    user?.role === "REQUESTER" && EDITABLE_STATUSES.has(request.status);
+  const canRerunExtract =
+    user?.role === "REQUESTER" &&
+    ["DRAFT", "READY", "CHANGES_REQUESTED", "EXTRACTING"].includes(request.status) &&
+    lines.length > 0;
+
+  const validations = request.validationResults ?? [];
+  const actionableValidations = validations.filter((v) => v.severity !== "INFO");
+  const highCount = actionableValidations.filter(
+    (v) => v.severity === "HIGH" || v.severity === "BLOCKING",
+  ).length;
 
   return (
     <div className="space-y-8">
@@ -174,6 +193,19 @@ export default function PaymentRequestDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <StatusBadge status={request.status} />
+          {request.riskLevel ? (
+            <StatusBadge status={request.riskLevel} />
+          ) : null}
+          {canRerunExtract ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void submitForProcessing()}
+              className="rounded border border-line bg-surface px-4 py-2.5 text-sm font-semibold hover:border-kfc/50 disabled:opacity-60"
+            >
+              {submitting ? "Extracting…" : "Re-run extract"}
+            </button>
+          ) : null}
           <div className="text-right">
             <div className="text-xs font-semibold tracking-wide text-muted uppercase">
               Total
@@ -195,17 +227,65 @@ export default function PaymentRequestDetailPage() {
         </p>
       ) : null}
 
+      {request.status === "EXTRACTING" ? (
+        <p className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-warn">
+          Extraction still running — risk and validation update when the worker
+          finishes. Use Re-run extract if it stalls.
+        </p>
+      ) : null}
+
+      {request.status !== "EXTRACTING" && actionableValidations.length > 0 ? (
+        <section
+          className={`rounded border px-4 py-3 ${
+            highCount > 0
+              ? "border-red-300 bg-red-50"
+              : "border-amber-300 bg-amber-50"
+          }`}
+          role="alert"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-xl font-semibold">
+              {highCount > 0 ? "High-risk findings" : "Validation warnings"}
+            </h2>
+            <StatusBadge status={request.riskLevel} />
+            <span className="text-sm text-muted">
+              {actionableValidations.length} alert
+              {actionableValidations.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {actionableValidations.slice(0, 8).map((f) => (
+              <li
+                key={f.id}
+                className="rounded border border-white/70 bg-white/80 px-3 py-2 text-sm"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={f.severity} />
+                  <span className="font-semibold">
+                    {f.validationType.replaceAll("_", " ")}
+                  </span>
+                </div>
+                <p className="mt-1 text-ink">{f.message}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <ApprovalPanel request={request} onUpdated={() => void load()} />
+
       <section className="space-y-3">
         <div>
           <h2 className="font-display text-2xl font-semibold">Payment lines</h2>
           <p className="mt-1 text-sm text-muted">
-            Review attached documents or upload one if a line is still missing a
-            file. Use the form below only when you need an extra line.
+            Click a line to compare OCR against the selected vendor and review
+            validation alerts.
           </p>
         </div>
         <PaymentLineGrid
           lines={lines}
           documents={documents}
+          validations={validations}
           selectedLineId={selectedLineId}
           onSelectLine={setSelectedLineId}
           canUpload={canEdit}
@@ -221,7 +301,8 @@ export default function PaymentRequestDetailPage() {
         <section className="rounded border border-line bg-surface p-5">
           <h3 className="font-display text-xl font-semibold">Add another line</h3>
           <p className="mt-1 text-sm text-muted">
-            Optional — for lines you did not include when creating the request.
+            Expense type, vendor, description, and invoice file only — amounts
+            are filled from OCR after processing.
           </p>
           <form
             onSubmit={(e) => void addLine(e)}
@@ -256,38 +337,7 @@ export default function PaymentRequestDetailPage() {
                 ))}
               </select>
             </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium">Net amount (VND)</span>
-              <input
-                required
-                type="number"
-                min={0}
-                step={1}
-                className="w-full rounded border border-line bg-paper px-3 py-2"
-                value={netAmount}
-                onChange={(e) => setNetAmount(e.target.value)}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium">Tax amount (VND)</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                className="w-full rounded border border-line bg-paper px-3 py-2"
-                value={taxAmount}
-                onChange={(e) => setTaxAmount(e.target.value)}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium">Invoice number</span>
-              <input
-                className="w-full rounded border border-line bg-paper px-3 py-2"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-              />
-            </label>
-            <label className="block text-sm">
+            <label className="block text-sm sm:col-span-2">
               <span className="mb-1 block font-medium">Description</span>
               <input
                 className="w-full rounded border border-line bg-paper px-3 py-2"
@@ -297,9 +347,10 @@ export default function PaymentRequestDetailPage() {
             </label>
             <label className="block text-sm sm:col-span-2">
               <span className="mb-1 block font-medium">
-                Document (optional) — XML / PDF / image
+                Invoice file (required) — XML / PDF / image
               </span>
               <input
+                required
                 type="file"
                 accept=".xml,.pdf,image/*,application/pdf,application/xml,text/xml"
                 className="w-full rounded border border-line bg-paper px-3 py-2"
@@ -317,11 +368,7 @@ export default function PaymentRequestDetailPage() {
                 disabled={adding}
                 className="rounded bg-kfc px-4 py-2.5 text-sm font-semibold text-white hover:bg-kfc-dark disabled:opacity-60"
               >
-                {adding
-                  ? newLineFile
-                    ? "Saving line & uploading…"
-                    : "Adding…"
-                  : "Add line"}
+                {adding ? "Saving & uploading…" : "Add line"}
               </button>
             </div>
           </form>

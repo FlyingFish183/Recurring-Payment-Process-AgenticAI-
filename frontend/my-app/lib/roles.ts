@@ -24,9 +24,11 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard" },
+  { href: "/coverage", label: "Monthly coverage" },
   { href: "/payment-requests", label: "Payment Inbox" },
+  { href: "/approvals", label: "Approvals", roles: ["HOD", "FA", "CA", "CASHIER"] },
   { href: "/payment-requests/new", label: "Create Request", roles: ["REQUESTER"] },
-  { href: "/master-data", label: "Master Data", roles: ["FA"] },
+  { href: "/master-data", label: "Master Data", roles: ["FA", "CA"] },
 ];
 
 export function canAccess(role: UserRole, item: NavItem): boolean {

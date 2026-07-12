@@ -1,5 +1,7 @@
 import type { Document, DocumentExtraction, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { parseInvoiceFromText } from "../utils/parseInvoiceText";
+import { applyLineFieldUpdates, fieldsFromStructured } from "./lineFill";
 import { downloadFromS3 } from "./s3";
 import { extractTextWithTextract } from "./textract";
 
@@ -48,6 +50,11 @@ async function extractXmlDocument(doc: Document): Promise<DocumentExtraction> {
 
 async function extractWithTextract(doc: Document): Promise<DocumentExtraction> {
   const result = await extractTextWithTextract(doc.storageUri, doc.fileFormat);
+  const parsedFields = parseInvoiceFromText(result.rawText);
+  const structuredFields = {
+    ...result.structuredFields,
+    ...parsedFields,
+  };
 
   return prisma.documentExtraction.create({
     data: {
@@ -55,7 +62,7 @@ async function extractWithTextract(doc: Document): Promise<DocumentExtraction> {
       engine: result.engine,
       extractionMethod: result.extractionMethod,
       rawText: result.rawText,
-      structuredFields: result.structuredFields as Prisma.InputJsonValue,
+      structuredFields: structuredFields as Prisma.InputJsonValue,
       pageData: result.pageData as Prisma.InputJsonValue,
       confidenceOverall: result.confidenceOverall ?? undefined,
       status: result.rawText.trim() ? "SUCCESS" : "PARTIAL",
@@ -85,6 +92,16 @@ export async function extractDocument(doc: Document): Promise<ExtractDocumentRes
       where: { id: doc.id },
       data: { processingStatus: "EXTRACTED" },
     });
+
+    // Auto-fill payment line amounts / invoice # from structured extraction when possible
+    if (doc.lineId && extraction.structuredFields) {
+      const structured =
+        extraction.structuredFields && typeof extraction.structuredFields === "object"
+          ? (extraction.structuredFields as Record<string, unknown>)
+          : null;
+      const update = fieldsFromStructured(doc.lineId, structured);
+      if (update) await applyLineFieldUpdates([update]);
+    }
 
     return { documentId: doc.id, extraction, ok: true };
   } catch (err) {
@@ -131,11 +148,6 @@ export async function extractDocumentsForRequest(requestId: string) {
 
   const okCount = results.filter((r) => r.ok).length;
   const failCount = results.length - okCount;
-
-  await prisma.paymentRequest.update({
-    where: { id: requestId },
-    data: { status: "READY" },
-  });
 
   return { results, okCount, failCount, total: results.length };
 }

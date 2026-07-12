@@ -78,8 +78,40 @@ export type PaymentLine = {
   description: string | null;
   status: string;
   source: string;
-  vendor?: Pick<Vendor, "id" | "vendorCode" | "legalName">;
-  contract?: { id: string; contractNumber: string } | null;
+  riskScore?: number | null;
+  vendor?: Pick<Vendor, "id" | "vendorCode" | "legalName" | "taxId">;
+  contract?: { id: string; contractNumber: string; baseAmount?: string | number } | null;
+  bankAccount?: {
+    id: string;
+    bankName: string;
+    accountName: string;
+    accountNumberHash: string;
+  } | null;
+};
+
+export type DocumentExtraction = {
+  id: string;
+  documentId: string;
+  engine: string;
+  extractionMethod: string;
+  rawText: string | null;
+  structuredFields: Record<string, unknown> | null;
+  pageData: unknown;
+  confidenceOverall: number | null;
+  status: string;
+  createdAt: string;
+};
+
+export type ValidationResult = {
+  id: string;
+  requestId: string | null;
+  lineId: string | null;
+  validationType: string;
+  severity: string;
+  message: string;
+  evidence?: Record<string, unknown> | null;
+  recommendedAction: string | null;
+  createdAt: string;
 };
 
 export type Document = {
@@ -96,6 +128,34 @@ export type Document = {
   documentType: string;
   processingStatus: string;
   uploadedById: string;
+  createdAt: string;
+  extractions?: DocumentExtraction[];
+};
+
+export type ApprovalStep = {
+  id: string;
+  requestId: string;
+  sequenceNumber: number;
+  roleRequired: UserRole;
+  status: string;
+  actorId: string | null;
+  comments: string | null;
+  signatureHash: string | null;
+  signedAt: string | null;
+  actedAt: string | null;
+  createdAt: string;
+  actor?: Pick<AuthUser, "id" | "displayName" | "email" | "role"> | null;
+};
+
+export type AuditEvent = {
+  id: string;
+  requestId: string | null;
+  actorId: string | null;
+  actorRole: UserRole | null;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  payload?: Record<string, unknown> | null;
   createdAt: string;
 };
 
@@ -117,7 +177,30 @@ export type PaymentRequest = {
   requester?: Pick<AuthUser, "id" | "displayName" | "role" | "email">;
   lines?: PaymentLine[];
   documents?: Document[];
+  validationResults?: ValidationResult[];
+  approvalSteps?: ApprovalStep[];
+  auditEvents?: AuditEvent[];
   _count?: { lines: number };
+};
+
+export type PendingApprovalStep = ApprovalStep & {
+  request: PaymentRequest & {
+    store?: Pick<Store, "id" | "storeCode" | "storeName"> & { region?: string };
+    lines?: Array<{
+      id: string;
+      lineNumber: number;
+      expenseType: string;
+      grossAmount: string | number;
+      invoiceNumber: string | null;
+      status?: string;
+      vendor?: { legalName: string; vendorCode: string };
+    }>;
+    validationResults?: Array<{
+      id: string;
+      validationType: string;
+      message: string;
+    }>;
+  };
 };
 
 export type Paginated<T> = {

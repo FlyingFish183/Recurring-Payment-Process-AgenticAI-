@@ -99,6 +99,24 @@ export default function DashboardPage() {
             Filter and open payment requests by store, period, and status.
           </p>
         </Link>
+        <Link
+          href="/coverage"
+          className="rounded border border-line bg-surface px-4 py-5 transition hover:border-kfc"
+        >
+          <div className="font-display text-xl font-semibold">Monthly coverage</div>
+          <p className="mt-1 text-sm text-muted">
+            Rent, water, electricity, service fee per store and month.
+          </p>
+        </Link>
+        <Link
+          href="/approvals"
+          className="rounded border border-line bg-surface px-4 py-5 transition hover:border-kfc"
+        >
+          <div className="font-display text-xl font-semibold">Approvals</div>
+          <p className="mt-1 text-sm text-muted">
+            HOD → F&amp;A → CA → Cashier queue for your role.
+          </p>
+        </Link>
         {user.role === "REQUESTER" ? (
           <Link
             href="/payment-requests/new"

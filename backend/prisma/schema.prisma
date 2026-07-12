@@ -204,6 +204,7 @@ model Store {
 
   contracts       Contract[]
   paymentRequests PaymentRequest[]
+  managers        StoreAssignment[]
 
   @@map("stores")
 }
@@ -224,8 +225,24 @@ model User {
   auditEvents     AuditEvent[]
   uploadedDocs    Document[]       @relation("UploadedBy")
   confirmedLines  PaymentLine[]    @relation("ConfirmedBy")
+  managedStores   StoreAssignment[]
 
   @@map("users")
+}
+
+/** Which stores an HOD (or requester) can see / manage. */
+model StoreAssignment {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  storeId   String   @map("store_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+  @@index([storeId])
+  @@map("store_assignments")
 }
 
 model Vendor {

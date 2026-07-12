@@ -1,11 +1,12 @@
 import { prisma } from "../lib/prisma";
+import { fillLinesFromExtractions } from "./fillFromExtraction";
 import { enqueueExtractJob } from "./sqs";
 import { AppError } from "../utils/errors";
 
 const SUBMITTABLE = new Set(["DRAFT", "CHANGES_REQUESTED", "READY", "EXTRACTING"]);
 
 /**
- * Mark request for AI extract/validate and push a FIFO SQS message.
+ * Mark request for OCR extract + rule validate and push a FIFO SQS message.
  * On worker failure later, leave findings / FAILED for HOD review (no DLQ).
  */
 export async function submitPaymentRequestForProcessing(input: {
@@ -48,6 +49,9 @@ export async function submitPaymentRequestForProcessing(input: {
     }
   });
 
+  // If OCR already exists, parse + fill line amounts immediately for the UI
+  await fillLinesFromExtractions(request.id);
+
   const { messageId } = await enqueueExtractJob({
     requestId: request.id,
     requestNumber: request.requestNumber,
@@ -58,7 +62,10 @@ export async function submitPaymentRequestForProcessing(input: {
     include: {
       store: { select: { id: true, storeCode: true, storeName: true } },
       lines: { orderBy: { lineNumber: "asc" } },
-      documents: { orderBy: { createdAt: "desc" } },
+      documents: {
+        orderBy: { createdAt: "desc" },
+        include: { extractions: { orderBy: { createdAt: "desc" }, take: 1 } },
+      },
     },
   });
 

@@ -7,6 +7,10 @@ const schema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
   JWT_SECRET: z.string().min(8).default("dev-only-change-me"),
   JWT_EXPIRES_IN: z.string().default("8h"),
+  /** HMAC signing secret for digital signatures (falls back to JWT_SECRET). */
+  SIGNING_SECRET: z.string().min(8).optional(),
+  /** Optional AWS KMS key id/ARN for RSASSA-PSS signatures (CA / Cashier). */
+  SIGNING_KMS_KEY_ID: z.string().min(1).optional(),
   BANK_ACCOUNT_ENCRYPTION_KEY: z.string().length(64).optional(),
 
   // Aurora IAM auth
@@ -20,11 +24,18 @@ const schema = z.object({
   // S3 document storage (Phase 2)
   S3_BUCKET: z.string().min(1).default("kfc-document-pdf"),
 
-  // SQS FIFO — extract / validate worker
+  // SQS FIFO — extract / rule-validate worker
   SQS_EXTRACT_QUEUE_URL: z
     .string()
     .url()
     .default("https://sqs.us-east-1.amazonaws.com/293221314416/extract-worker.fifo"),
+
+  /** OpenAI — CA/Cashier analytics chat (text-to-SQL). */
+  OPENAI_API_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim().length > 0 ? v.trim() : undefined)),
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
 });
 
 const parsed = schema.safeParse(process.env);

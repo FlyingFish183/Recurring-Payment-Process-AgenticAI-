@@ -1,12 +1,12 @@
 import { createApp } from "../app";
 import { env } from "../config/env";
-import { disconnectDb, prisma } from "../lib/prisma";
+import { disconnectDb, warmDbPool } from "../lib/prisma";
 
 async function main() {
   const app = createApp();
 
   try {
-    await prisma.$connect();
+    await warmDbPool();
     console.log(`Connected to Aurora via IAM → ${env.DB_HOST}`);
   } catch (err) {
     console.error("Failed to connect to database:", err);
