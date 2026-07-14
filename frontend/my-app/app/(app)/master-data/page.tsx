@@ -335,10 +335,9 @@ export default function MasterDataPage() {
                                     {b.bankName}
                                     {b.bankCode ? ` (${b.bankCode})` : ""}
                                   </div>
-                                  <div className="text-xs text-muted">
-                                    {b.accountName} · hash{" "}
-                                    {b.accountNumberHash.slice(0, 10)}…
-                                  </div>
+                  <div className="text-xs text-muted">
+                    {b.accountName} · {b.accountNumber ?? "—"}
+                  </div>
                                 </div>
                                 <button
                                   type="button"

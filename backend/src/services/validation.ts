@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Prisma, RiskLevel, ValidationSeverity, ValidationType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import {
+  looksLikeDateOnly,
+  parseInvoiceFromText,
+  scrubStructuredFields,
+} from "../utils/parseInvoiceText";
 
 const CONTRACT_AMOUNT_TOLERANCE = 0.15; // 15% either side
 const AMOUNT_ANOMALY_MULTIPLIER = 3;
@@ -75,20 +80,72 @@ function hashAccount(plain: string): string {
   return createHash("sha256").update(plain).digest("hex");
 }
 
-/** Pull plausible bank account numbers from OCR text / structured fields. */
-function extractAccountCandidates(rawText: string | null, fields: Record<string, unknown> | null): string[] {
+/** Compare calendar dates only (ignore timezone time-of-day). */
+function dateOnlyUtc(d: Date): number {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function formatDateOnly(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Pull bank account candidates from labeled OCR fields only (not tax IDs / amounts). */
+function extractAccountCandidates(
+  rawText: string | null,
+  fields: Record<string, unknown> | null,
+  excludeDigits: string[] = [],
+): string[] {
   const out = new Set<string>();
-  const fromFields = strField(fields, "bankAccount", "accountNumber", "bankAccountNumber");
-  if (fromFields) {
-    const d = digitsOnly(fromFields);
-    if (d.length >= 8 && d.length <= 20) out.add(d);
-  }
+  const excluded = new Set(excludeDigits.map(digitsOnly).filter((d) => d.length >= 8));
+
+  /** Unlabeled / ambiguous digits — respect exclude list (invoice #, vendor tax ID). */
+  const add = (raw: string | null | undefined) => {
+    if (!raw) return;
+    const d = digitsOnly(raw);
+    if (d.length < 8 || d.length > 20) return;
+    if (excluded.has(d)) return;
+    out.add(d);
+  };
+
+  /**
+   * Explicitly labeled account numbers always win.
+   * (12-digit STK was previously dropped because tax-ID heuristics also matched it.)
+   */
+  const addLabeled = (raw: string | null | undefined) => {
+    if (!raw) return;
+    const d = digitsOnly(raw);
+    if (d.length < 8 || d.length > 20) return;
+    out.add(d);
+  };
+
+  const fromFields = strField(
+    fields,
+    "bankAccount",
+    "accountNumber",
+    "bankAccountNumber",
+    "stk",
+  );
+  if (fromFields) addLabeled(fromFields);
+
   if (rawText) {
-    for (const m of rawText.matchAll(/\b(\d[\d\s-]{7,22}\d)\b/g)) {
-      const d = digitsOnly(m[1]);
-      if (d.length >= 8 && d.length <= 20) out.add(d);
+    for (const m of rawText.matchAll(
+      /(?:account\s*(?:no\.?|number|#)|a\/c\s*(?:no\.?|#)?|stk|số\s*tài\s*khoản|beneficiary(?:\s*account)?)\s*[.:]*\s*([\d\s-]{8,22})/gi,
+    )) {
+      addLabeled(m[1]);
+    }
+    // Label on its own line, digits on the next ("Account No.:" then "0011…")
+    const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (
+        /^(?:account\s*(?:no\.?|number|#)|a\/c\s*(?:no\.?|#)?|stk|số\s*tài\s*khoản|beneficiary(?:\s*account)?)\s*[.:]*\s*$/i.test(
+          lines[i]!,
+        )
+      ) {
+        addLabeled(lines[i + 1]);
+      }
     }
   }
+
   return [...out];
 }
 
@@ -99,12 +156,23 @@ function extractTaxIdCandidates(rawText: string | null, fields: Record<string, u
     const d = digitsOnly(fromFields);
     if (d.length >= 10) out.add(d);
   }
+
+  // Digits explicitly labeled as bank accounts must not become tax IDs
+  const accountDigits = new Set(
+    extractAccountCandidates(rawText, fields, []).map(digitsOnly),
+  );
+
   if (rawText) {
-    for (const m of rawText.matchAll(/(?:tax\s*id|mst|vat\s*(?:no|number)?)\s*[:.]?\s*(\d[\d\s-]{8,14}\d)/gi)) {
-      out.add(digitsOnly(m[1]));
+    for (const m of rawText.matchAll(
+      /(?:tax\s*id|mst|vat\s*(?:no|number)?)\s*[.:]*\s*(\d[\d\s-]{8,14}\d)/gi,
+    )) {
+      const d = digitsOnly(m[1]);
+      if (!accountDigits.has(d)) out.add(d);
     }
+    // Only grab unlabeled 10–13 digit runs that are not already a labeled account
     for (const m of rawText.matchAll(/\b(\d{10,13})\b/g)) {
-      out.add(m[1]);
+      const d = m[1]!;
+      if (!accountDigits.has(d)) out.add(d);
     }
   }
   return [...out];
@@ -297,14 +365,49 @@ export async function analyzePaymentRequest(requestId: string) {
     const lineDoc =
       line.documents[0] ?? request.documents.find((d) => d.lineId === line.id) ?? null;
     const extraction = lineDoc?.extractions[0] ?? null;
-    const fields = asRecord(extraction?.structuredFields);
+    const storedFields = asRecord(extraction?.structuredFields) ?? {};
     const rawText = extraction?.rawText ?? null;
+    // Prefer live OCR parse — clears stale bugs (e.g. date stored as sellerName)
+    const fromText = rawText ? parseInvoiceFromText(rawText) : {};
+    const fields = scrubStructuredFields({ ...storedFields, ...fromText });
 
-    const extractedSeller =
+    let extractedSeller =
       strField(fields, "sellerName", "vendorName", "supplierName") ?? null;
+    if (
+      extractedSeller &&
+      (looksLikeDateOnly(extractedSeller) || /^INV[- ]?\d+/i.test(extractedSeller))
+    ) {
+      extractedSeller = null;
+    }
     const extractedTaxIds = extractTaxIdCandidates(rawText, fields);
-    const extractedAccounts = extractAccountCandidates(rawText, fields);
     const extractedBankName = strField(fields, "bankName", "bank");
+
+    // Backfill invoice date on the line when OCR has it but the row was never updated
+    const parsedInvoiceDate =
+      typeof fields.invoiceDate === "string" ? fields.invoiceDate : null;
+    if (!line.invoiceDate && parsedInvoiceDate) {
+      const iso = parsedInvoiceDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) {
+        const filled = new Date(
+          Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])),
+        );
+        await prisma.paymentLine.update({
+          where: { id: line.id },
+          data: { invoiceDate: filled },
+        });
+        line.invoiceDate = filled;
+      }
+    }
+
+    // Persist cleaned structured fields so UI stops showing the date as seller
+    if (extraction && rawText) {
+      await prisma.documentExtraction.update({
+        where: { id: extraction.id },
+        data: {
+          structuredFields: fields as Prisma.InputJsonValue,
+        },
+      });
+    }
 
     // --- DOCUMENT_COMPLETENESS ---
     if (!extraction || extraction.status === "FAILED") {
@@ -360,6 +463,17 @@ export async function analyzePaymentRequest(requestId: string) {
 
     // --- VENDOR_MATCH ---
     const vendor = line.vendor;
+    const excludeFromBank = [
+      // Only hard-exclude known non-account identifiers — not every 10–13 digit OCR run
+      // (those wrongly swallowed STK like 001151738492 as a "tax ID").
+      ...(vendor.taxId ? [vendor.taxId] : []),
+      ...(line.invoiceNumber ? [digitsOnly(line.invoiceNumber)] : []),
+    ];
+    const extractedAccounts = extractAccountCandidates(
+      rawText,
+      fields,
+      excludeFromBank,
+    );
     let vendorOk = true;
     const hasSellerSignal = Boolean(extractedSeller) || extractedTaxIds.length > 0;
 
@@ -499,8 +613,8 @@ export async function analyzePaymentRequest(requestId: string) {
         const invDate = line.invoiceDate;
         if (
           invDate &&
-          ((masterBank.validFrom && invDate < masterBank.validFrom) ||
-            (masterBank.validTo && invDate > masterBank.validTo))
+          ((masterBank.validFrom && dateOnlyUtc(invDate) < dateOnlyUtc(masterBank.validFrom)) ||
+            (masterBank.validTo && dateOnlyUtc(invDate) > dateOnlyUtc(masterBank.validTo)))
         ) {
           findings.push({
             lineId: line.id,
@@ -509,9 +623,11 @@ export async function analyzePaymentRequest(requestId: string) {
             message: "Invoice date is outside the linked bank account validity period.",
             recommendedAction: "Use a bank account valid for the invoice date",
             evidence: {
-              invoiceDate: invDate,
-              validFrom: masterBank.validFrom,
-              validTo: masterBank.validTo,
+              invoiceDate: formatDateOnly(invDate),
+              validFrom: masterBank.validFrom
+                ? formatDateOnly(masterBank.validFrom)
+                : null,
+              validTo: masterBank.validTo ? formatDateOnly(masterBank.validTo) : null,
             },
           });
         }
@@ -566,6 +682,19 @@ export async function analyzePaymentRequest(requestId: string) {
             evidence: {
               extractedBankName,
               linkedBankName: masterBank.bankName,
+            },
+          });
+        } else {
+          // No account digits on invoice — cannot prove mismatch; linked master is OK
+          findings.push({
+            lineId: line.id,
+            validationType: "BANK_MATCH",
+            severity: "INFO",
+            message: `OCR did not extract an account number; using linked account at ${masterBank.bankName} (${masterBank.accountName}).`,
+            evidence: {
+              bankName: masterBank.bankName,
+              accountName: masterBank.accountName,
+              verification: "master_link_only",
             },
           });
         }
@@ -786,20 +915,24 @@ export async function analyzePaymentRequest(requestId: string) {
     // --- CONTRACT_DATE ---
     if (contractForChecks && line.invoiceDate) {
       const inv = line.invoiceDate;
-      if (
-        inv < contractForChecks.startDate ||
-        (contractForChecks.endDate && inv > contractForChecks.endDate)
-      ) {
+      const invDay = dateOnlyUtc(inv);
+      const startDay = dateOnlyUtc(contractForChecks.startDate);
+      const endDay = contractForChecks.endDate
+        ? dateOnlyUtc(contractForChecks.endDate)
+        : null;
+      if (invDay < startDay || (endDay != null && invDay > endDay)) {
         findings.push({
           lineId: line.id,
           validationType: "CONTRACT_DATE",
           severity: "HIGH",
-          message: `Invoice date ${inv.toISOString().slice(0, 10)} is outside contract ${contractForChecks.contractNumber} period.`,
+          message: `Invoice date ${formatDateOnly(inv)} is outside contract ${contractForChecks.contractNumber} period.`,
           recommendedAction: "Check contract validity dates",
           evidence: {
-            invoiceDate: inv,
-            contractStart: contractForChecks.startDate,
-            contractEnd: contractForChecks.endDate,
+            invoiceDate: formatDateOnly(inv),
+            contractStart: formatDateOnly(contractForChecks.startDate),
+            contractEnd: contractForChecks.endDate
+              ? formatDateOnly(contractForChecks.endDate)
+              : null,
             contractNumber: contractForChecks.contractNumber,
             suggested: contractIsSuggested,
           },
@@ -809,8 +942,11 @@ export async function analyzePaymentRequest(requestId: string) {
           lineId: line.id,
           validationType: "CONTRACT_DATE",
           severity: "INFO",
-          message: `Invoice date is within contract ${contractForChecks.contractNumber} period.`,
-          evidence: { contractNumber: contractForChecks.contractNumber },
+          message: `Invoice date ${formatDateOnly(inv)} is within contract ${contractForChecks.contractNumber} period.`,
+          evidence: {
+            invoiceDate: formatDateOnly(inv),
+            contractNumber: contractForChecks.contractNumber,
+          },
         });
       }
     }

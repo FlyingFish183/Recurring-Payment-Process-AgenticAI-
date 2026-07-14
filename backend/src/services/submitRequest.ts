@@ -38,12 +38,11 @@ export async function submitPaymentRequestForProcessing(input: {
       data: { status: "EXTRACTING" },
     });
 
+    // Re-queue every doc (including already EXTRACTED) so Re-run extract
+    // actually re-OCRs and re-validates instead of no-oping.
     if (request.documents.length > 0) {
       await tx.document.updateMany({
-        where: {
-          requestId: request.id,
-          processingStatus: { in: ["UPLOADED", "QUEUED", "FAILED"] },
-        },
+        where: { requestId: request.id },
         data: { processingStatus: "QUEUED" },
       });
     }

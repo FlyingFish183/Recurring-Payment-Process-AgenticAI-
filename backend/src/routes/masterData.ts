@@ -1,11 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
-import { createHash, createCipheriv, randomBytes } from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { authenticate, requireRole } from "../middleware/auth";
 import { asyncHandler } from "../middleware/errorHandler";
-import { env } from "../config/env";
 import { AppError } from "../utils/errors";
+import { decryptAccountNumber, encryptAccountNumber } from "../utils/bankCrypto";
 
 export const masterDataRouter = Router();
 
@@ -19,27 +18,13 @@ const pagination = z.object({
   pageSize: z.coerce.number().int().positive().max(100).default(50),
 });
 
-function encryptAccount(plain: string): { enc: string; hash: string } {
-  const keyHex =
-    env.BANK_ACCOUNT_ENCRYPTION_KEY ??
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  const key = Buffer.from(keyHex.slice(0, 64), "hex");
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    enc: Buffer.concat([iv, tag, encrypted]).toString("base64"),
-    hash: createHash("sha256").update(plain).digest("hex"),
-  };
-}
-
 const bankAccountSelect = {
   id: true,
   vendorId: true,
   bankName: true,
   bankCode: true,
   accountName: true,
+  accountNumberEnc: true,
   accountNumberHash: true,
   isActive: true,
   verificationStatus: true,
@@ -47,6 +32,14 @@ const bankAccountSelect = {
   validTo: true,
   createdAt: true,
 } as const;
+
+function presentBankAccount<T extends { accountNumberEnc: string }>(row: T) {
+  const { accountNumberEnc, ...rest } = row;
+  return {
+    ...rest,
+    accountNumber: decryptAccountNumber(accountNumberEnc),
+  };
+}
 
 // ── Stores ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +119,10 @@ masterDataRouter.get(
       prisma.vendor.count(),
     ]);
     res.json({
-      data,
+      data: data.map((v) => ({
+        ...v,
+        bankAccounts: v.bankAccounts.map(presentBankAccount),
+      })),
       pagination: { page, pageSize, totalItems, totalPages: Math.ceil(totalItems / pageSize) },
     });
   }),
@@ -210,7 +206,7 @@ masterDataRouter.get(
       orderBy: { createdAt: "desc" },
       select: bankAccountSelect,
     });
-    res.json({ data });
+    res.json({ data: data.map(presentBankAccount) });
   }),
 );
 
@@ -231,7 +227,7 @@ masterDataRouter.post(
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) throw new AppError(404, "NOT_FOUND", "Vendor not found");
 
-    const { enc, hash } = encryptAccount(body.accountNumber);
+    const { enc, hash } = encryptAccountNumber(body.accountNumber);
     const account = await prisma.bankAccount.create({
       data: {
         vendorId,
@@ -245,7 +241,7 @@ masterDataRouter.post(
       },
       select: bankAccountSelect,
     });
-    res.status(201).json(account);
+    res.status(201).json(presentBankAccount(account));
   }),
 );
 

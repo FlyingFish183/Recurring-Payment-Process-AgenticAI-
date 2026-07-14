@@ -50,6 +50,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/** Display calendar dates as YYYY-MM-DD (avoid timezone day-shift). */
+function formatDateYmd(value: string | Date): string {
+  if (typeof value === "string") {
+    const m = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1]!;
+  }
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toISOString().slice(0, 10);
+}
+
 function pickString(
   fields: Record<string, unknown> | null,
   keys: string[],
@@ -96,16 +107,20 @@ function latestExtraction(doc: Document | undefined): DocumentExtraction | null 
 function summarizeExtraction(extraction: DocumentExtraction | null): ExtractedSummary | null {
   if (!extraction) return null;
   const fromText = extraction.rawText ? parseInvoiceFromText(extraction.rawText) : {};
+  // Prefer live OCR parse over stale structuredFields (which may still have old bugs)
   const fields = {
-    ...fromText,
     ...(asRecord(extraction.structuredFields) ?? {}),
+    ...fromText,
   };
-  const sellerName = pickString(fields, [
+  let sellerName = pickString(fields, [
     "sellerName",
     "SellerLegalName",
     "vendorName",
     "NBan",
   ]);
+  if (sellerName && /^\d{4}-\d{1,2}-\d{1,2}$/.test(sellerName.trim())) {
+    sellerName = undefined;
+  }
   const taxId = pickString(fields, ["taxId", "sellerTaxId", "mst", "vatNumber", "TaxCode"]);
   const invoiceNumber = pickString(fields, [
     "invoiceNumber",
@@ -418,8 +433,10 @@ function LineDetailPanel({
 
   const invoiceNumber = line.invoiceNumber || summary?.invoiceNumber || null;
   const invoiceDate = line.invoiceDate
-    ? new Date(line.invoiceDate).toLocaleDateString()
-    : summary?.invoiceDate || null;
+    ? formatDateYmd(line.invoiceDate)
+    : summary?.invoiceDate
+      ? formatDateYmd(summary.invoiceDate)
+      : null;
   const uniqueFindings = findings.filter(
     (f, i, arr) =>
       arr.findIndex(

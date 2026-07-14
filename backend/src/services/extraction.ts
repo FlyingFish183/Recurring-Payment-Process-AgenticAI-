@@ -1,6 +1,9 @@
 import type { Document, DocumentExtraction, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { parseInvoiceFromText } from "../utils/parseInvoiceText";
+import {
+  parseInvoiceFromText,
+  scrubStructuredFields,
+} from "../utils/parseInvoiceText";
 import { applyLineFieldUpdates, fieldsFromStructured } from "./lineFill";
 import { downloadFromS3 } from "./s3";
 import { extractTextWithTextract } from "./textract";
@@ -51,10 +54,10 @@ async function extractXmlDocument(doc: Document): Promise<DocumentExtraction> {
 async function extractWithTextract(doc: Document): Promise<DocumentExtraction> {
   const result = await extractTextWithTextract(doc.storageUri, doc.fileFormat);
   const parsedFields = parseInvoiceFromText(result.rawText);
-  const structuredFields = {
+  const structuredFields = scrubStructuredFields({
     ...result.structuredFields,
     ...parsedFields,
-  };
+  });
 
   return prisma.documentExtraction.create({
     data: {

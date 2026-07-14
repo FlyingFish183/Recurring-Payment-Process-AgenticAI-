@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { parseInvoiceFromText } from "../utils/parseInvoiceText";
+import {
+  parseInvoiceFromText,
+  scrubStructuredFields,
+} from "../utils/parseInvoiceText";
 import { applyLineFieldUpdates, fieldsFromStructured } from "./lineFill";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -29,11 +32,12 @@ export async function fillLinesFromExtractions(requestId: string) {
     if (!extraction || !doc.lineId) continue;
 
     const existing = asRecord(extraction.structuredFields) ?? {};
+    scrubStructuredFields(existing);
     const fromText = extraction.rawText
       ? parseInvoiceFromText(extraction.rawText)
       : {};
-    // Prefer freshly parsed OCR amounts over stale structured blobs
-    const structured = { ...existing, ...fromText };
+    // Prefer freshly parsed OCR fields over stale structured blobs
+    const structured = scrubStructuredFields({ ...existing, ...fromText });
 
     await prisma.documentExtraction.update({
       where: { id: extraction.id },

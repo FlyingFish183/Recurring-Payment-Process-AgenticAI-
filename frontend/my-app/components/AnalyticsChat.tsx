@@ -23,7 +23,7 @@ type ChatMessage =
 type QueryResult = {
   question: string;
   answer: string;
-  mode: "sql" | "coverage";
+  mode: "sql" | "coverage" | "bank" | "vendor";
   sql: string | null;
   rowCount: number;
   rows: ChatRow[];

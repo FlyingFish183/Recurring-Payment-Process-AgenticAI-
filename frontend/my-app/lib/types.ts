@@ -35,6 +35,8 @@ export type BankAccount = {
   bankName: string;
   bankCode: string | null;
   accountName: string;
+  /** Full account number for FA/CA (decrypted server-side). */
+  accountNumber?: string | null;
   accountNumberHash: string;
   isActive: boolean;
   verificationStatus: string;

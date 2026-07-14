@@ -20,7 +20,13 @@ function parseMoney(value: unknown): number | null {
 
 function parseDate(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
-  const d = new Date(value);
+  const s = value.trim();
+  // Store calendar dates as UTC midnight so YYYY-MM-DD never shifts by timezone
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    return new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+  }
+  const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
